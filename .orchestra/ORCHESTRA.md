@@ -29,3 +29,9 @@ copy-paste between tools.
 ## Modes
 - **open** — this file. Cloud Claude + Codex (code leaves the machine).
 - **private** — all-local, no cloud. To be designed.
+
+## Enforcement (not just rules)
+A PreToolUse hook (`.orchestra/hooks/guard-src.py`, wired via `.claude/settings.json`)
+**blocks** any write to `src/` or `tests/` — Write/Edit/NotebookEdit and Bash
+(`cat >`, `tee`, `sed -i`, `cp/mv`, `python open(...)`). The only way code reaches those
+dirs is the delegated coder (`code.py`). The orchestrator cannot write feature code itself.

@@ -11,4 +11,21 @@ mkdir -p "$DST/.claude/commands"
 cp "$SRC/.claude/commands/cycle.md" "$DST/.claude/commands/cycle.md"
 printf '\n%s\n' "$(cat "$SRC/CLAUDE.orchestra.md")" >> "$DST/CLAUDE.md"
 grep -qxF '.orchestra/codex-home/' "$DST/.gitignore" 2>/dev/null || printf '.orchestra/codex-home/\n__pycache__/\n' >> "$DST/.gitignore"
-echo "Installed into $DST. Merge settings.orchestra.json into $DST/.claude/settings.json to skip prompts."
+# merge the enforcement hook + allowlist into .claude/settings.json
+python3 - "$SRC/settings.orchestra.json" "$DST/.claude/settings.json" <<'PY'
+import json, os, sys
+add = json.load(open(sys.argv[1]))
+dst = sys.argv[2]
+cur = json.load(open(dst)) if os.path.exists(dst) else {}
+cur.setdefault("permissions", {}).setdefault("allow", [])
+for a in add.get("permissions", {}).get("allow", []):
+    if a not in cur["permissions"]["allow"]:
+        cur["permissions"]["allow"].append(a)
+ch = cur.setdefault("hooks", {}).setdefault("PreToolUse", [])
+for h in add.get("hooks", {}).get("PreToolUse", []):
+    if h not in ch:
+        ch.append(h)
+json.dump(cur, open(dst, "w"), indent=2)
+print("merged enforcement settings into", dst)
+PY
+echo "Installed into $DST (guard hook active: src/ & tests/ writes are blocked outside code.py)."
