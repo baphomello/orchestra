@@ -1,26 +1,23 @@
 #!/usr/bin/env python3
-"""Lean coding agent over Ollama's native tool-calling.
+"""Lean coding agent over Ollama's native tool-calling, with a text fallback.
 
 The orchestrator feeds it one curated task; it edits the repo directly through a
-tiny tool set and verifies with `run`. No skills, no MCP, no framework — the only
-context the model sees is this ~1k system prompt, the task, and tool results.
+tiny tool set and verifies with `run`. No skills, no MCP, no framework.
 
-Usage:
-  python3 code.py "<task>"
-  python3 code.py --task-file path/to/task.md
-Env (set by orchestra.config.sh):
-  ORCHESTRA_MODEL       Ollama model tag
-  ORCHESTRA_OLLAMA_URL  e.g. http://192.168.32.1:11434
-  ORCHESTRA_REPO        repo root (default: cwd)
-  ORCHESTRA_MAX_STEPS   tool rounds cap (default: 30)
+Many local models emit tool calls as text (```json {...}``` or <tool_call>{...}</tool_call>)
+instead of native tool_calls, so we parse those too.
+
+Usage:  python3 code.py "<task>"   |   python3 code.py --task-file path
+Env (orchestra.config.sh): ORCHESTRA_MODEL, ORCHESTRA_OLLAMA_URL, ORCHESTRA_REPO,
+     ORCHESTRA_MAX_STEPS, ORCHESTRA_CHAT_TIMEOUT, ORCHESTRA_RUN_TIMEOUT
 """
-import json, os, subprocess, sys, urllib.request
+import json, os, re, subprocess, sys, urllib.request
 
 MODEL   = os.environ.get("ORCHESTRA_MODEL", "qwen2.5-coder:7b")
 BASE    = os.environ.get("ORCHESTRA_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 REPO    = os.path.abspath(os.environ.get("ORCHESTRA_REPO", os.getcwd()))
 MAXSTEP = int(os.environ.get("ORCHESTRA_MAX_STEPS", "30"))
-RUN_TIMEOUT = int(os.environ.get("ORCHESTRA_RUN_TIMEOUT", "300"))
+RUN_TIMEOUT  = int(os.environ.get("ORCHESTRA_RUN_TIMEOUT", "300"))
 CHAT_TIMEOUT = int(os.environ.get("ORCHESTRA_CHAT_TIMEOUT", "900"))
 
 SYSTEM = (
@@ -30,6 +27,7 @@ SYSTEM = (
     "Rules:\n"
     "- Use tools to read/write files and run commands. NEVER print code as an answer; "
     "write it to the file with write_file.\n"
+    "- Emit tool calls using the native function-call mechanism, one at a time.\n"
     "- Paths are relative to the repo root. Stay inside the repo.\n"
     "- Match the existing code style. Keep the change minimal and on-task.\n"
     "- When the task is done AND verified (the requested test/command passes), call "
@@ -75,10 +73,34 @@ def read_file(path):
 def run(command):
     r = subprocess.run(command, shell=True, cwd=REPO, capture_output=True,
                        text=True, timeout=RUN_TIMEOUT)
-    out = (r.stdout + r.stderr)[-4000:]
-    return f"exit={r.returncode}\n{out}"
+    return f"exit={r.returncode}\n{(r.stdout + r.stderr)[-4000:]}"
 
 HANDLERS = {"write_file": write_file, "read_file": read_file, "run": run}
+
+def extract_text_calls(text):
+    """Parse tool calls a model emitted as text instead of native tool_calls."""
+    if not text:
+        return []
+    regions = re.findall(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+    regions += re.findall(r"<tool_call>\s*(.*?)\s*</tool_call>", text, re.DOTALL)
+    if not regions:
+        regions = [text]
+    out, dec = [], json.JSONDecoder()
+    for region in regions:
+        s, i = region.strip(), 0
+        while True:
+            j = s.find("{", i)
+            if j < 0:
+                break
+            try:
+                obj, end = dec.raw_decode(s, j)
+                i = end
+                if isinstance(obj, dict) and "name" in obj:
+                    out.append({"function": {"name": obj["name"],
+                                             "arguments": obj.get("arguments", {})}})
+            except Exception:
+                i = j + 1
+    return out
 
 def chat(messages):
     body = json.dumps({"model": MODEL, "messages": messages,
@@ -99,6 +121,8 @@ def main():
 
     messages = [{"role": "system", "content": SYSTEM},
                 {"role": "user", "content": task}]
+    nudged = 0
+    last_sig, repeat = None, 0
     for step in range(1, MAXSTEP + 1):
         try:
             msg = chat(messages)
@@ -106,14 +130,31 @@ def main():
             print(f"\n[ERROR] chat failed at step {step}: {e}", flush=True)
             print("[STOP] model unreachable or too slow; partial work left on disk.", flush=True)
             return 2
-        messages.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls")})
         calls = msg.get("tool_calls") or []
+        source = "native"
         if not calls:
+            calls = extract_text_calls(msg.get("content") or "")
+            source = "text"
+        if not calls:
+            messages.append({"role": "assistant", "content": msg.get("content") or ""})
             txt = (msg.get("content") or "").strip()
-            print(f"[step {step}] no tool call. model said: {txt[:300]}", flush=True)
+            print(f"[step {step}] no tool call. model said: {txt[:200]}", flush=True)
+            nudged += 1
+            if nudged > 3:
+                print("[STOP] model will not call tools; giving up.", flush=True)
+                return 1
             messages.append({"role": "user", "content":
-                "Act through the tools (write_file/run/finish). Don't describe — do it."})
+                "Call the tools directly (write_file/run/finish). Do not print JSON or code."})
             continue
+        nudged = 0
+        # coherent history: always record as native tool_calls, whatever the source
+        messages.append({"role": "assistant", "content": "", "tool_calls": calls})
+        sig = json.dumps([(c["function"]["name"], c["function"].get("arguments")) for c in calls], sort_keys=True)
+        repeat = repeat + 1 if sig == last_sig else 0
+        last_sig = sig
+        if repeat >= 2:
+            print(f"[STOP] model repeated identical actions {repeat+1}x without progress; not converging.", flush=True)
+            return 1
         for c in calls:
             fn = c["function"]["name"]; args = c["function"].get("arguments") or {}
             if fn == "finish":
@@ -122,7 +163,8 @@ def main():
                 result = HANDLERS[fn](**args)
             except Exception as e:
                 result = f"ERROR: {e}"
-            print(f"[step {step}] {fn}({json.dumps(args)[:120]}) -> {result.splitlines()[0][:160] if result else ''}", flush=True)
+            line = result.splitlines()[0][:160] if result else ""
+            print(f"[step {step}] ({source}) {fn}({json.dumps(args)[:100]}) -> {line}", flush=True)
             messages.append({"role": "tool", "tool_name": fn, "content": result})
     print("\n[STOP] hit max steps without finish", flush=True); return 1
 
