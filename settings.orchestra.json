@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 .orchestra/scripts/code.py:*)",
+      "Bash(bash .orchestra/scripts/review.sh:*)",
+      "Bash(codex exec:*)",
+      "Bash(cargo:*)"
+    ]
+  }
+}
