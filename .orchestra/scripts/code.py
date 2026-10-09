@@ -21,6 +21,7 @@ BASE    = os.environ.get("ORCHESTRA_OLLAMA_URL", "http://127.0.0.1:11434").rstri
 REPO    = os.path.abspath(os.environ.get("ORCHESTRA_REPO", os.getcwd()))
 MAXSTEP = int(os.environ.get("ORCHESTRA_MAX_STEPS", "30"))
 RUN_TIMEOUT = int(os.environ.get("ORCHESTRA_RUN_TIMEOUT", "300"))
+CHAT_TIMEOUT = int(os.environ.get("ORCHESTRA_CHAT_TIMEOUT", "900"))
 
 SYSTEM = (
     "You are a focused coding agent working inside a single repository. Make exactly "
@@ -84,7 +85,7 @@ def chat(messages):
                        "tools": TOOLS, "stream": False}).encode()
     req = urllib.request.Request(BASE + "/api/chat", data=body,
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=RUN_TIMEOUT) as r:
+    with urllib.request.urlopen(req, timeout=CHAT_TIMEOUT) as r:
         return json.loads(r.read())["message"]
 
 def main():
@@ -99,7 +100,12 @@ def main():
     messages = [{"role": "system", "content": SYSTEM},
                 {"role": "user", "content": task}]
     for step in range(1, MAXSTEP + 1):
-        msg = chat(messages)
+        try:
+            msg = chat(messages)
+        except Exception as e:
+            print(f"\n[ERROR] chat failed at step {step}: {e}", flush=True)
+            print("[STOP] model unreachable or too slow; partial work left on disk.", flush=True)
+            return 2
         messages.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls")})
         calls = msg.get("tool_calls") or []
         if not calls:
