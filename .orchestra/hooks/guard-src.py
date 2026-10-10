@@ -28,7 +28,7 @@ elif tool == "Bash":
     c = ti.get("command", "")
     src = r'(?:\./|["\'])?(?:src|tests)/'
     pats = [
-        r'>>?\s*' + src,                                        # cat > src/  |  >> tests/
+        r'(?<![-=<>])>>?\s*' + src,                                        # cat > src/  |  >> tests/
         r'\btee\b[^|;&\n]*\b(?:src|tests)/',                    # tee src/...
         r'\bsed\b[^|;&\n]*-i[^|;&\n]*\b(?:src|tests)/',         # sed -i ... src/
         r'\b(?:cp|mv|install|rsync)\b[^|;&\n]*\b(?:src|tests)/',# cp/mv into src/
