@@ -13,7 +13,7 @@ Env (orchestra.config.sh): ORCHESTRA_MODEL, ORCHESTRA_OLLAMA_URL, ORCHESTRA_REPO
 """
 import json, os, re, subprocess, sys, urllib.request
 
-MODEL   = os.environ.get("ORCHESTRA_MODEL", "qwen2.5-coder:7b")
+MODEL   = os.environ.get("ORCHESTRA_MODEL", "ornith1.5:9b")
 BASE    = os.environ.get("ORCHESTRA_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 REPO    = os.path.abspath(os.environ.get("ORCHESTRA_REPO", os.getcwd()))
 MAXSTEP = int(os.environ.get("ORCHESTRA_MAX_STEPS", "30"))
