@@ -77,6 +77,19 @@ def run(command):
 
 HANDLERS = {"write_file": write_file, "read_file": read_file, "run": run}
 
+def repair_collapsed_content(args):
+    """A text-mode model often writes \\n in its JSON, so a whole file decodes to one
+    line of literal backslash-n. Repair only that exact shape: a `content` with escapes
+    and not one real newline. Anything else is left byte-for-byte alone."""
+    c = args.get("content") if isinstance(args, dict) else None
+    if isinstance(c, str) and "\n" not in c and "\\n" in c:
+        args["content"] = (c.replace("\\r\\n", "\n")
+                            .replace("\\n", "\n")
+                            .replace("\\t", "\t"))
+        print(f"[repair] un-escaped {c.count(chr(92) + 'n')} newline(s) in content", flush=True)
+    return args
+
+
 def extract_text_calls(text):
     """Parse tool calls a model emitted as text instead of native tool_calls."""
     if not text:
@@ -97,7 +110,8 @@ def extract_text_calls(text):
                 i = end
                 if isinstance(obj, dict) and "name" in obj:
                     out.append({"function": {"name": obj["name"],
-                                             "arguments": obj.get("arguments", {})}})
+                                             "arguments": repair_collapsed_content(
+                                                 obj.get("arguments", {}))}})
             except Exception:
                 i = j + 1
     return out

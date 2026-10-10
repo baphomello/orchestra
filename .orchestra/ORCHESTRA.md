@@ -32,6 +32,6 @@ copy-paste between tools.
 
 ## Enforcement (not just rules)
 A PreToolUse hook (`.orchestra/hooks/guard-src.py`, wired via `.claude/settings.json`)
-**blocks** any write to `src/` or `tests/` — Write/Edit/NotebookEdit and Bash
+**blocks** any write to `src/` — (Write/Edit and Bash redirect/tee/sed/cp). The orchestrator OWNS tests/ (the acceptance oracle it authors); the coder owns src/.
 (`cat >`, `tee`, `sed -i`, `cp/mv`, `python open(...)`). The only way code reaches those
 dirs is the delegated coder (`code.py`). The orchestrator cannot write feature code itself.
