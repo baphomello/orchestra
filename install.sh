@@ -4,12 +4,13 @@ set -euo pipefail
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DST="${1:?usage: ./install.sh <target-repo>}"
 [ -d "$DST/.git" ] || { echo "not a git repo: $DST"; exit 1; }
+rm -rf "$DST/.orchestra"
 cp -r "$SRC/.orchestra" "$DST/.orchestra"
 rm -rf "$DST/.orchestra/codex-home"
 bash "$DST/.orchestra/setup-codex-home.sh"
 mkdir -p "$DST/.claude/commands"
 cp "$SRC/.claude/commands/cycle.md" "$DST/.claude/commands/cycle.md"
-printf '\n%s\n' "$(cat "$SRC/CLAUDE.orchestra.md")" >> "$DST/CLAUDE.md"
+grep -qF "Orchestra — you are the orchestrator" "$DST/CLAUDE.md" 2>/dev/null || printf '\n%s\n' "$(cat "$SRC/CLAUDE.orchestra.md")" >> "$DST/CLAUDE.md"
 grep -qxF '.orchestra/codex-home/' "$DST/.gitignore" 2>/dev/null || printf '.orchestra/codex-home/\n__pycache__/\n' >> "$DST/.gitignore"
 # merge the enforcement hook + allowlist into .claude/settings.json
 python3 - "$SRC/settings.orchestra.json" "$DST/.claude/settings.json" <<'PY'
